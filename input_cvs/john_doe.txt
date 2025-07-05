@@ -1,0 +1,8 @@
+Name: John Doe
+Email: john.doe@example.com
+Phone: +1-555-1234
+Skills: Python, Java, SQL, HTML, CSS
+Experience:
+- Software Engineer at TechCorp (2019–2023)
+- Intern at WebSolutions (2018)
+Education: B.Sc. in Computer Science, UCLA

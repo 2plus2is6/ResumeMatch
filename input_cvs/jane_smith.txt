@@ -1,0 +1,8 @@
+Name: Jane Smith
+Email: jane.smith@example.com
+Phone: +1-555-5678
+Skills: C++, Machine Learning, TensorFlow, Git
+Experience:
+- Data Analyst at DataDrive Inc. (2020–2024)
+- Research Assistant at MIT AI Lab (2019)
+Education: M.Sc. in Data Science, MIT
