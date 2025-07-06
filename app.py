@@ -1,4 +1,5 @@
 import streamlit as st
+from tf_idf import find_matches
 
 st.title("Resume Matcher")
 st.write("Upload multiple CV's and enter keywords to find most relevant candidates.")
@@ -18,18 +19,10 @@ if st.button("Search"):
             cv_texts[file.name] = content
 
 
-        match_scores = {}
-        for filename, text in cv_texts.items():
-            count = 0
-            for keyword in keywords:
-                if keyword in text:
-                    count += 1
-            match_scores[filename] = count
-
-
-        sorted_results = sorted(match_scores.items(), key=lambda x: x[1], reverse=True)
+        query = keywordInput.strip().lower()
+        sorted_results = find_matches(cv_texts, query)
 
         # Display results
         st.subheader("CV Match Results")
         for filename, score in sorted_results:
-            st.write(f"**{filename}**: {score} keyword match{'es' if score != 1 else ''}")
+            st.write(f"**{filename}**: - Similarity: {score * 100:.2f}% match")
