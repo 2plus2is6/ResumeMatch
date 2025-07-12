@@ -1,17 +1,9 @@
-import os
-import nltk
-nltk.data.path.insert(0, os.path.join(os.getcwd(), 'nltk_data'))
-
-from nltk.corpus import stopwords
-from nltk.tokenize import RegexpTokenizer
-
+from transformers import pipeline
 import streamlit as st
-import string
 from tf_idf import find_matches
 from pypdf import PdfReader
 import spacy
 
-from operator import itemgetter
 
 # — SpaCy setup for both query preprocessing and stop-words —
 nlp = spacy.load("en_core_web_sm")
@@ -25,30 +17,56 @@ def preprocess(text: str) -> str:
         if not token.is_stop and token.is_alpha
     )
 
-#NLTK Summarizer
-sents_tokenizer = RegexpTokenizer(r'[^\.!?]+[\.!?]')
-words_tokenizer = RegexpTokenizer(r"\b\w+\b")
-def summarizer(text: str, top_n=5) -> str:
 
-    sents = sents_tokenizer.tokenize(text)
-    words = words_tokenizer.tokenize(text.lower())
+def extractSkills(query_in: str) -> set:
 
-    stops = set(stopwords.words("english")) | set(string.punctuation)
-    frequencies = {}
-    for w in words:
-        if w in stops:
-            continue
-        frequencies[w] = frequencies.get(w, 0) + 1
+    doc = nlp(query_in.lower())
+    skills = set()
+    for token in doc:
+        if token.pos_ in {"NOUN","PROPN"} and not token.is_stop:
+            skills.add(token.text)
+    for chunk in doc.noun_chunks:
+        if not any(token.is_stop for token in chunk):
+            skills.add(chunk.text.lower())
 
-    sent_scores = {}
-    for sent in sents:
-        score = sum(frequencies.get(w, 0) for w in words_tokenizer.tokenize(sent.lower()))
-        if score > 0:
-            sent_scores[sent] = score
+    #Multi-word skill matching
+    from spacy.matcher import Matcher
+    matcher = Matcher(nlp.vocab)
+    PATTERNS =[
+        {"label": "SKILL", "pattern": [{"LOWER": "machine"}, {"LOWER": "learning"}]},
+        {"label": "SKILL", "pattern": [{"LOWER": "data"}, {"LOWER": "science"}]},
+        {"label": "SKILL", "pattern": [{"LOWER": "cloud"}, {"LOWER": "computing"}]},
+        {"label": "SKILL", "pattern": [{"LOWER": "natural"}, {"LOWER": "language"}, {"LOWER": "processing"}]},
+    ]
+    for pattern in PATTERNS:
+        matcher.add(pattern["label"], [pattern["pattern"]])
+    matches = matcher(doc)
+    for match_id, start, end in matches:
+        skills.add(doc[start:end].text.lower())
+    return skills
 
-    best5 = sorted(sent_scores.items(), key=itemgetter(1), reverse=True)[:top_n]
-    summary_cv = " ".join(s for s in sents if s in best5)
-    return summary_cv or text[:200].strip() + ".."
+
+summarizer_model = pipeline("summarization", model="facebook/bart-large-cnn", device="mps")
+
+def summarizer(text: str, query: str) -> str:
+    skills = extractSkills(query)
+    skills_str = ", ".join(skills) if skills else "relevant skills"
+
+    doc = nlp(text[:10000])
+    text = " ".join(sent.text for sent in doc.sents if sent.text.strip())[:4000]  #
+    prompt = f"Summarize the following resume in 50–150 words, focusing on skills (e.g., {skills_str}) and experience relevant to: {query}\n\n{text}"
+
+    try:
+        summary_cv = summarizer_model(prompt, max_length=150, min_length=50, do_sample=False)[0]["summary_text"]
+        words = summary_cv.split()
+        if len(words) > 150:
+            summary_cv = " ".join(words[:150]) + "...."
+        elif len(words) < 50:
+            summary_cv = summary_cv or text[:200].strip() + "...."
+        return summary_cv
+    except Exception as e:
+        st.warning(f"Error summarizing resume")
+        return text[:200].strip() + "...."
 
 # — Streamlit UI —
 st.title("Resume Matcher")
@@ -82,6 +100,7 @@ if st.button("Search"):
     # Display with summaries
     for name, score in results:
         st.subheader(f"{name} — {score*100:.2f}% match")
-        summary = summarizer(cv_texts[name], top_n=5)
+        summary = summarizer(cv_texts[name],query_input)
         st.markdown(f"**Summary:** {summary}")
         st.markdown("---")
+
