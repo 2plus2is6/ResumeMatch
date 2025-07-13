@@ -22,51 +22,55 @@ def extractSkills(query_in: str) -> set:
 
     doc = nlp(query_in.lower())
     skills = set()
-    for token in doc:
-        if token.pos_ in {"NOUN","PROPN"} and not token.is_stop:
-            skills.add(token.text)
-    for chunk in doc.noun_chunks:
-        if not any(token.is_stop for token in chunk):
-            skills.add(chunk.text.lower())
+    for ent in doc.ents:
+        if ent.label_ in {"ORG","PRODUCT","TECH"}:
+            skills.add(ent.text.lower())
 
-    #Multi-word skill matching
-    from spacy.matcher import Matcher
-    matcher = Matcher(nlp.vocab)
-    PATTERNS =[
-        {"label": "SKILL", "pattern": [{"LOWER": "machine"}, {"LOWER": "learning"}]},
-        {"label": "SKILL", "pattern": [{"LOWER": "data"}, {"LOWER": "science"}]},
-        {"label": "SKILL", "pattern": [{"LOWER": "cloud"}, {"LOWER": "computing"}]},
-        {"label": "SKILL", "pattern": [{"LOWER": "natural"}, {"LOWER": "language"}, {"LOWER": "processing"}]},
-    ]
-    for pattern in PATTERNS:
-        matcher.add(pattern["label"], [pattern["pattern"]])
-    matches = matcher(doc)
-    for match_id, start, end in matches:
-        skills.add(doc[start:end].text.lower())
+    for chunk in doc.noun_chunks:
+        if chunk.root.dep_ in {"attr","dobj","nsubj"}:
+            clean_chunk = " ".join(t.text for t in chunk if not t.is_stop and t.is_alpha)
+            if clean_chunk:
+                skills.add(clean_chunk.lower()
+                           )
     return skills
 
 
-summarizer_model = pipeline("summarization", model="facebook/bart-large-cnn", device="mps")
+def get_relevant_sections(text: str, skills: set) -> str:
+    doc = nlp(text[:10000])
+    section_keywords = ["experience", "skills", "projects", "education"]
+    relevant = []
+
+    for sent in doc.sents:
+        sent_text = sent.text.lower()
+
+        if any(skill in sent_text for skill in skills) or \
+                any(kw in sent_text for kw in section_keywords):
+            relevant.append(sent.text)
+
+    return " ".join(relevant[:15])
+
+summarizer_model = pipeline("summarization", model="facebook/bart-large-cnn", device=-1)
 
 def summarizer(text: str, query: str) -> str:
+    # Extract skills from query
     skills = extractSkills(query)
-    skills_str = ", ".join(skills) if skills else "relevant skills"
+    relevant_text = get_relevant_sections(text, skills)
 
-    doc = nlp(text[:10000])
-    text = " ".join(sent.text for sent in doc.sents if sent.text.strip())[:4000]  #
-    prompt = f"Summarize the following resume in 50–150 words, focusing on skills (e.g., {skills_str}) and experience relevant to: {query}\n\n{text}"
+    if not relevant_text.strip():
+        return "No relevant skills found."
 
-    try:
-        summary_cv = summarizer_model(prompt, max_length=150, min_length=50, do_sample=False)[0]["summary_text"]
-        words = summary_cv.split()
-        if len(words) > 150:
-            summary_cv = " ".join(words[:150]) + "...."
-        elif len(words) < 50:
-            summary_cv = summary_cv or text[:200].strip() + "...."
-        return summary_cv
-    except Exception as e:
-        st.warning(f"Error summarizing resume")
-        return text[:200].strip() + "...."
+    summary = summarizer_model(
+        f"Summarize career highlights focusing on {', '.join(skills)}: {relevant_text}",
+        max_length=120,
+        min_length=60,
+        num_beams=4,
+        no_repeat_ngram_size=2,
+        truncation=True
+    )[0]["summary_text"]
+
+    return ". ".join(list(dict.fromkeys(summary.split(". ")))[:300])
+
+
 
 # — Streamlit UI —
 st.title("Resume Matcher")
